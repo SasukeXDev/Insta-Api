@@ -48,6 +48,14 @@ def video():
     url = f"https://hanime.tv/api/v8/video?id={slug}"
     return proxy_hanime_api(url)
 
+# 🔥 Play Details
+@app.route('/play')
+def play():
+    link = request.args.get('link')
+    if not link:
+        return jsonify({"error": "Missing link"}), 400
+    return render_template('play.html', link=link)
+
 
 # 🔥 Browse Tags & Brands
 @app.route("/browse")
