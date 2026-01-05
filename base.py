@@ -18,7 +18,7 @@ os.makedirs(HLS_OUTPUT_DIR, exist_ok=True)
 COMMON_HEADERS = (
     "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36\r\n"
-    "Referer: https://360hub.fun/\r\n"
+    "Referer: https://forproduction.onrender.com/\r\n"
 )
 
 @app.route('/convert', methods=['POST', 'OPTIONS'])
