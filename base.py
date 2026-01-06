@@ -12,10 +12,11 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 HLS_DIR = os.path.join(BASE_DIR, "static", "streams")
 os.makedirs(HLS_DIR, exist_ok=True)
 
-FFMPEG_BIN = "ffmpeg"
-
-@app.route("/convert", methods=["POST"])
+@app.route("/convert", methods=["POST", "OPTIONS"])
 def convert():
+    if request.method == "OPTIONS":
+        return jsonify({"status": "ok"}), 200
+
     data = request.get_json(silent=True)
     if not data or "url" not in data:
         return jsonify({"status": "error", "message": "URL missing"}), 400
@@ -27,83 +28,75 @@ def convert():
 
     os.makedirs(out_dir, exist_ok=True)
 
+    # Return existing if found
     if os.path.exists(playlist):
-        # Re-check protocol to avoid Mixed Content
         proto = request.headers.get("X-Forwarded-Proto", "https")
         return jsonify({
             "status": "success",
             "hls_link": f"{proto}://{request.host}/static/streams/{stream_id}/index.m3u8"
         })
 
-    # -------- FIXED FFMPEG COMMAND --------
+    # -------- STRENGTHENED FFMPEG COMMAND --------
     cmd = [
-        FFMPEG_BIN, "-y",
-        "-hide_banner", "-loglevel", "warning",
+        "ffmpeg", "-y",
+        "-hide_banner", "-loglevel", "error",
+        
+        # FIX: Increase probing to find all audio tracks in large MKV files
+        "-analyzeduration", "20000000", 
+        "-probesize", "20000000",
+        
         "-reconnect", "1", "-reconnect_streamed", "1", "-reconnect_delay_max", "5",
         "-i", video_url,
 
-        # Map 1st video and ALL available audio streams
+        # FIX: Explicit Mapping (Maps 1st video and ALL audio streams ONLY)
+        # This ignores the corrupted PNG attachment causing your crash
         "-map", "0:v:0",
-        "-map", "0:a?",
+        "-map", "0:a",
 
-        "-c:v", "copy",        # Fast copy video
-        "-c:a", "aac",         # Encode all audio to AAC
-        "-ac", "2",            # Downmix to stereo for web compatibility
-
-        # HLS SETTINGS FOR VOD (Removes Live Badge)
+        "-c:v", "copy",        # Direct stream copy for video
+        "-c:a", "aac",         # Encode all audio to AAC for HLS
+        "-ac", "2",            # Downmix to stereo for web stability
+        
+        # FIX: HLS VOD Flags (Removes Live Badge)
         "-f", "hls",
         "-hls_time", "10",
-        "-hls_list_size", "0",              # Keep all segments in the playlist
-        "-hls_playlist_type", "vod",        # CRITICAL: Tells player it's NOT live
+        "-hls_list_size", "0",
+        "-hls_playlist_type", "vod",  # Forces VOD (removes Live badge)
         "-hls_flags", "independent_segments",
-        "-master_pl_name", "master.m3u8",   # Optional: useful for multi-track
         
-        "-hls_segment_filename",
-        os.path.join(out_dir, "seg_%05d.ts"),
+        "-hls_segment_filename", os.path.join(out_dir, "seg_%05d.ts"),
         playlist
     ]
 
     try:
-        # We don't wait for the whole movie to finish, just the first few segments
-        subprocess.Popen(cmd) 
+        # Start conversion in background
+        subprocess.Popen(cmd)
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-    # -------- WAIT UNTIL INITIAL PLAYLIST IS CREATED --------
-    timeout = 15
+    # -------- WAIT UNTIL PLAYLIST IS READY --------
+    timeout = 20 # Increased timeout for slow probing links
     while timeout > 0:
-        if os.path.exists(playlist):
-            # Verify file has content before serving
-            if os.path.getsize(playlist) > 0:
-                break
+        if os.path.exists(playlist) and os.path.getsize(playlist) > 0:
+            break
         time.sleep(1)
         timeout -= 1
 
     if not os.path.exists(playlist):
-        return jsonify({"status": "error", "message": "FFmpeg timed out"}), 500
+        return jsonify({"status": "error", "message": "FFmpeg failed to create playlist"}), 500
 
     proto = request.headers.get("X-Forwarded-Proto", "https")
-    host = request.headers.get("Host")
-    hls_url = f"{proto}://{host}/static/streams/{stream_id}/index.m3u8"
+    hls_url = f"{proto}://{request.host}/static/streams/{stream_id}/index.m3u8"
 
-    return jsonify({
-        "status": "success",
-        "hls_link": hls_url
-    })
+    return jsonify({"status": "success", "hls_link": hls_url})
 
 @app.route("/static/streams/<path:filename>")
 def serve_hls(filename):
     response = send_from_directory(HLS_DIR, filename)
-    # Correct Mime-Types are vital for Audio/Sub selection to show up
+    # Vital for multi-track support
     if filename.endswith(".m3u8"):
         response.headers["Content-Type"] = "application/vnd.apple.mpegurl"
-    elif filename.endswith(".ts"):
-        response.headers["Content-Type"] = "video/MP2T"
-    
-    response.headers.update({
-        "Access-Control-Allow-Origin": "*",
-        "Cache-Control": "no-cache"
-    })
+    response.headers["Access-Control-Allow-Origin"] = "*"
     return response
 
 if __name__ == "__main__":
