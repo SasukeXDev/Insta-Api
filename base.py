@@ -15,7 +15,7 @@ def convert():
     video_url = data.get("url")
 
     if not video_url:
-        return jsonify({"error": "No URL provided"}), 400
+        return jsonify({"error": "No URL"}), 400
 
     stream_id = hashlib.md5(video_url.encode()).hexdigest()
     out_dir = os.path.join(HLS_DIR, stream_id)
@@ -23,13 +23,16 @@ def convert():
 
     os.makedirs(out_dir, exist_ok=True)
 
-    # Start conversion if not already started
+    # Start ffmpeg ONLY if not already running
     if not os.path.exists(playlist):
         cmd = [
             "ffmpeg", "-y",
+            "-loglevel", "error",
+
             "-reconnect", "1",
             "-reconnect_streamed", "1",
             "-reconnect_delay_max", "5",
+
             "-i", video_url,
 
             "-map", "0:v:0",
@@ -42,8 +45,9 @@ def convert():
             "-hls_time", "6",
             "-hls_list_size", "0",
             "-hls_playlist_type", "vod",
-            "-hls_flags", "independent_segments",
+            "-hls_flags", "independent_segments+append_list",
             "-hls_segment_filename", os.path.join(out_dir, "seg_%05d.ts"),
+
             playlist
         ]
 
@@ -53,17 +57,13 @@ def convert():
             stderr=subprocess.DEVNULL
         )
 
-        # ⏳ WAIT until index.m3u8 exists (max 15s)
-        timeout = time.time() + 15
-        while not os.path.exists(playlist):
-            if time.time() > timeout:
-                return jsonify({"error": "HLS generation timeout"}), 500
-            time.sleep(0.3)
-
     proto = request.headers.get("X-Forwarded-Proto", "https")
     hls_url = f"{proto}://{request.host}/streams/{stream_id}/index.m3u8"
 
-    return jsonify({"hls": hls_url})
+    return jsonify({
+        "status": "starting",
+        "hls": hls_url
+    })
 
 
 # ✅ CORRECT STATIC ROUTE (IMPORTANT)
@@ -79,6 +79,7 @@ def serve_hls(stream_id, filename):
         response.headers["Content-Type"] = "video/mp2t"
 
     return response
+
 
 
 if __name__ == "__main__":
