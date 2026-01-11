@@ -7,5 +7,5 @@ requests[socks]
 werkzeug
 flask-logging
 
-yt-dlp
+yt_dlp
 gunicorn
