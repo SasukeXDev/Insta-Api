@@ -25,6 +25,7 @@ def download_video():
     ydl_opts = {
         "outtmpl": filepath,
         "format": "mp4",
+        "cookiefile": "cookies.txt",
         "noplaylist": True,
         "quiet": True
     }
